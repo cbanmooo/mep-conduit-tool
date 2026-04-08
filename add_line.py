@@ -13,7 +13,7 @@ st.set_page_config(layout="wide", page_title="MEP Conduit Tool")
 # 1. ข้อมูล Database ทั้งหมด
 # ==========================================
 
-# --- ตารางสายไฟฟ้ากำลัง (THW) ---
+# --- ตารางสายไฟฟ้ากำลัง (THW) อ้างอิงมาตรฐาน วสท. ---
 WIRE_TABLE = {
     1.5: [9, 16, 26, 45, 61, 101],
     2.5: [6, 12, 20, 35, 47, 78],
@@ -31,22 +31,22 @@ LAN_OD = {
     "Cat 6A (UTP/FTP)": 7.5
 }
 
-# --- ข้อมูลสาย Twisted Pair (Control / System) ---
+# --- ข้อมูลสาย Twisted Pair (Control / Fire Alarm) ---
 TWISTED_OD = {
     "RS-485 (1 Pair)": 5.9,
     "Fire Alarm 2x1.5 mm²": 8.0,
-    "Fire Alarm 2x2.5 mm²": 10.5, # เพิ่มขนาดตามรูปสเปกใหม่
+    "Fire Alarm 2x2.5 mm²": 10.5,
     "Speaker Cable 2x1.5": 6.5,
     "BAS Control (Multi-core)": 7.2
 }
 
-# --- ข้อมูลสาย VTF (เสียงประกาศ) ---
+# --- ข้อมูลสาย VTF (เสียงประกาศ / Horn) ---
 VTF_OD = {
     "VTF 2x1.5 mm²": 8.2,
-    "VTF 2x2.5 mm²": 9.5  # สายอวบสำหรับงาน Horn/Speaker
+    "VTF 2x2.5 mm²": 9.5
 }
 
-# ค่า I.D. ของท่อ EMT (mm) เพื่อใช้คำนวณพื้นที่ 40%
+# ค่า I.D. ของท่อ EMT (mm) สำหรับคำนวณ 40% Area
 PIPE_DATA = [
     {"name": "1/2\"", "id_mm": 16},
     {"name": "3/4\"", "id_mm": 21},
@@ -77,17 +77,12 @@ def calculate_conduit_power(qty, wire_size, has_ground, g_size):
 def calculate_conduit_area(qty, od_mm):
     total_area = qty * np.pi * ((od_mm / 2)**2)
     selected_pipe = "Over 3\""
-    pipe_id_used = 0
     for pipe in PIPE_DATA:
         allowable_area = (np.pi * ((pipe["id_mm"] / 2)**2)) * 0.40
         if total_area <= allowable_area:
             selected_pipe = pipe["name"]
-            pipe_id_used = pipe["id_mm"]
             break
-    
-    # คำนวณ % Fill จริงเพื่อใช้แสดงกิมมิค
-    actual_fill = (total_area / (np.pi * ((pipe_id_used / 2)**2)) * 100) if pipe_id_used > 0 else 100
-    return selected_pipe, total_area, actual_fill
+    return selected_pipe, total_area
 
 # ==========================================
 # 3. UI Streamlit
@@ -101,46 +96,90 @@ page = st.sidebar.radio("หมวดหมู่การร้อยท่อ"
     "🔊 สาย VTF (เสียงประกาศ)"
 ])
 st.sidebar.divider()
-st.sidebar.info("เขียนเล่นๆ ถ้าผิดห้ามด่า (โดย Engineer Chai)")
+st.sidebar.info("Developed by Chayanarong (ME Engineer)")
 
 SAVE_PATH = 'projectlinedata.csv'
 
-# --- Logic แสดงกิมมิคกวนๆ ---
-def show_gimmick(fill_percent):
-    if fill_percent > 38:
-        st.warning(f"😱 แน่นจัด! (Fill: {fill_percent:.1f}%) พี่ยัดสายหรือยัดไส้บะจ่างครับเนี่ย?! ระวังดึงสายขาดนะ")
-    elif fill_percent > 30:
-        st.info(f"😅 ตึงๆ มือนะพี่ (Fill: {fill_percent:.1f}%) ช่างร้อยสายมีปาดเหงื่อแน่นอน")
-    else:
-        st.success(f"😎 หลวมโครก (Fill: {fill_percent:.1f}%) ร้อยสายชิลๆ เหมือนเดินห้างเลยพี่")
+# --- หน้า 1: สายไฟฟ้า (Power) ---
+if page == "⚡ สายไฟฟ้า (Power)":
+    st.title("⚡ Power Wire Sizing")
+    col1, col2 = st.columns([1, 1.5])
+    wire_choices = list(WIRE_TABLE.keys())
+    with col1:
+        qty = st.number_input("จำนวนสายไฟหลัก (เส้น)", min_value=1, value=2)
+        wire_size = st.selectbox("ขนาดสายเส้นไฟ (mm²)", wire_choices, index=1)
+        has_ground = st.checkbox("มีสาย Ground (G)", value=True)
+        g_size = st.selectbox("ขนาดสาย G (mm²)", wire_choices, index=0, disabled=not has_ground)
+    
+    pipe_ans, tot_wires = calculate_conduit_power(qty, wire_size, has_ground, g_size)
+    spec_text = f"{qty}-{wire_size}" + (f"/G{g_size}" if has_ground else "")
+    with col2:
+        st.info(f"สเปกสาย: **{spec_text}**")
+        container = st.container(border=True)
+        container.write("### ไซส์ท่อ EMT ที่เหมาะสมคือ")
+        container.title(f"👉 {pipe_ans}")
+        st.write(f"จำนวนสายรวม: {tot_wires} เส้น")
+    if st.button("💾 บันทึกสเปกนี้"):
+        new_data = pd.DataFrame([{"Spec": spec_text, "Conduit": pipe_ans, "Type": "Power"}])
+        new_data.to_csv(SAVE_PATH, mode='a' if os.path.exists(SAVE_PATH) else 'w', header=not os.path.exists(SAVE_PATH), index=False)
+        st.success("บันทึกสำเร็จ!")
 
-# ----------------- หน้า 1, 2, 3 (คงเดิมตามแนวทางคุณ) -----------------
-# (เพื่อความกระชับ ผมข้ามการเขียนซ้ำในหน้านี้ แต่ให้คุณใช้โค้ดเดิมของคุณได้เลย)
-
-# ----------------- หน้า 4: สาย VTF (ใหม่!) -----------------
-if page == "🔊 สาย VTF (เสียงประกาศ)":
-    st.title("🔊 Speaker & Horn (VTF) Sizing")
-    st.write("คำนวณสำหรับสาย VTF บิดเกลียว (อ้างอิง Area 40%)")
-
+# --- หน้า 2: สายแลน (LAN) ---
+elif page == "🌐 สายแลน (IT/Network)":
+    st.title("🌐 LAN Cable Sizing")
     col1, col2 = st.columns([1, 1.5])
     with col1:
-        st.subheader("📦 Speaker Config")
+        qty_lan = st.number_input("จำนวนสาย LAN (เส้น)", min_value=1, value=1)
+        type_lan = st.selectbox("ประเภทสาย LAN", list(LAN_OD.keys()), index=1)
+    pipe_lan, area_lan = calculate_conduit_area(qty_lan, LAN_OD[type_lan])
+    spec_lan = f"{qty_lan} x {type_lan}"
+    with col2:
+        st.info(f"สเปกสาย: **{spec_lan}**")
+        container = st.container(border=True)
+        container.write("### ไซส์ท่อ EMT ที่เหมาะสมคือ")
+        container.title(f"👉 {pipe_lan}")
+        st.write(f"พื้นที่รวม: {area_lan:.2f} mm²")
+    if st.button("💾 บันทึกสเปกนี้"):
+        new_data = pd.DataFrame([{"Spec": spec_lan, "Conduit": pipe_lan, "Type": "LAN"}])
+        new_data.to_csv(SAVE_PATH, mode='a' if os.path.exists(SAVE_PATH) else 'w', header=not os.path.exists(SAVE_PATH), index=False)
+        st.success("บันทึกสำเร็จ!")
+
+# --- หน้า 3: สายเกลียวคู่ (Twisted Pair) ---
+elif page == "🔀 สายเกลียวคู่ (Control/Twisted Pair)":
+    st.title("🔀 Control & Twisted Pair Sizing")
+    col1, col2 = st.columns([1, 1.5])
+    with col1:
+        qty_tp = st.number_input("จำนวนสาย (เส้น)", min_value=1, value=1)
+        type_tp = st.selectbox("ชนิดสาย (O.D.)", list(TWISTED_OD.keys()), index=1)
+    pipe_tp, area_tp = calculate_conduit_area(qty_tp, TWISTED_OD[type_tp])
+    spec_tp = f"{qty_tp} x {type_tp}"
+    with col2:
+        st.info(f"สเปกสาย: **{spec_tp}**")
+        container = st.container(border=True)
+        container.write("### ไซส์ท่อ EMT ที่เหมาะสมคือ")
+        container.title(f"👉 {pipe_tp}")
+        st.write(f"พื้นที่รวม: {area_tp:.2f} mm²")
+    if st.button("💾 บันทึกสเปกนี้"):
+        new_data = pd.DataFrame([{"Spec": spec_tp, "Conduit": pipe_tp, "Type": "Twisted Pair"}])
+        new_data.to_csv(SAVE_PATH, mode='a' if os.path.exists(SAVE_PATH) else 'w', header=not os.path.exists(SAVE_PATH), index=False)
+        st.success("บันทึกสำเร็จ!")
+
+# --- หน้า 4: สาย VTF (เสียงประกาศ) ---
+elif page == "🔊 สาย VTF (เสียงประกาศ)":
+    st.title("🔊 Speaker & Horn (VTF) Sizing")
+    col1, col2 = st.columns([1, 1.5])
+    with col1:
         qty_vtf = st.number_input("จำนวนสาย VTF (เส้น)", min_value=1, value=1)
         type_vtf = st.selectbox("ขนาดสาย VTF", list(VTF_OD.keys()), index=1)
-
-    vtf_od_val = VTF_OD[type_vtf]
-    pipe_vtf, area_vtf, fill_vtf = calculate_conduit_area(qty_vtf, vtf_od_val)
+    pipe_vtf, area_vtf = calculate_conduit_area(qty_vtf, VTF_OD[type_vtf])
     spec_vtf = f"{qty_vtf} x {type_vtf}"
-
     with col2:
         st.info(f"สเปกสาย: **{spec_vtf}**")
-        container_vtf = st.container(border=True)
-        container_vtf.write("### ไซส์ท่อ EMT ที่เหมาะสมคือ")
-        container_vtf.title(f"👉 {pipe_vtf}")
-        show_gimmick(fill_vtf)
+        container = st.container(border=True)
+        container.write("### ไซส์ท่อ EMT ที่เหมาะสมคือ")
+        container.title(f"👉 {pipe_vtf}")
         st.write(f"พื้นที่รวม: {area_vtf:.2f} mm²")
-
-    if st.button("💾 บันทึกสเปก VTF"):
+    if st.button("💾 บันทึกสเปกนี้"):
         new_data = pd.DataFrame([{"Spec": spec_vtf, "Conduit": pipe_vtf, "Type": "VTF"}])
         new_data.to_csv(SAVE_PATH, mode='a' if os.path.exists(SAVE_PATH) else 'w', header=not os.path.exists(SAVE_PATH), index=False)
-        st.success("บันทึกเรียบร้อย!")
+        st.success("บันทึกสำเร็จ!")

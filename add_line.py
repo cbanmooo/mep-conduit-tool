@@ -93,7 +93,7 @@ page = st.sidebar.radio("หมวดหมู่การร้อยท่อ"
     "🔀 สายเกลียวคู่ (Control/Twisted Pair)"
 ])
 st.sidebar.divider()
-st.sidebar.info("พัฒนาระบบโดย: ME Engineer")
+st.sidebar.info("เขียนเล่นๆ ถ้าผิดห้ามด่า")
 
 # --- Path สำหรับ Save Database ---
 SAVE_PATH = 'projectlinedata.csv'

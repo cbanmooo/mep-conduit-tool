@@ -96,7 +96,7 @@ page = st.sidebar.radio("หมวดหมู่การร้อยท่อ"
     "🔊 สาย VTF (เสียงประกาศ)"
 ])
 st.sidebar.divider()
-st.sidebar.info("Developed by Chaianarong")
+st.sidebar.info("Developed by Chainarong")
 
 SAVE_PATH = 'projectlinedata.csv'
 

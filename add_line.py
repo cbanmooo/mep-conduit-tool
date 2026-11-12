@@ -1,4 +1,4 @@
-# revise03 - Added EIT Table 5-8 Grouping Derating & Circuit Breaker (AT) Verification
+# revise04 - Added EIT Table 4-1 Minimum Ground Wire Check + Table 5-8 Derating Check
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -56,6 +56,16 @@ GROUPING_FACTOR = {
     20: 0.38
 }
 
+# ขนาดต่ำสุดของสายดินทองแดงตามขนาดเครื่องป้องกันกระแสเกิน AT (วสท. ตารางที่ 4-1)
+EIT_GROUND_TABLE = [
+    (15, 1.5),
+    (20, 2.5),
+    (30, 4.0),
+    (40, 6.0),
+    (60, 10.0),
+    (100, 16.0),
+]
+
 BREAKER_RATINGS = [10, 16, 20, 25, 32, 40, 50, 63]
 
 # --- ข้อมูลสาย LAN (IT Network) ---
@@ -99,10 +109,27 @@ PIPE_DATA = [
 # 2. ฟังก์ชันการคำนวณ
 # ==========================================
 
+def fmt_size(val):
+    return str(int(val)) if val == int(val) else str(val)
+
 def get_derating_factor(num_circuits):
     if num_circuits <= 1:
         return 1.00
     return GROUPING_FACTOR.get(num_circuits, 0.38)
+
+def get_min_ground_size(breaker_at, phase_wire_size=None, is_phase_ok=True):
+    """
+    ตรวจสอบขนาดสายดินทองแดงขั้นต่ำตามตารางที่ 4-1 ของ วสท.
+    หมายเหตุตามมาตรฐาน วสท.: ขนาดสายดินไม่จำเป็นต้องใหญ่กว่าขนาดสายตัวนำของวงจร
+    """
+    min_g = 16.0
+    for max_at, g_sqmm in EIT_GROUND_TABLE:
+        if breaker_at <= max_at:
+            min_g = g_sqmm
+            break
+    if is_phase_ok and phase_wire_size is not None:
+        min_g = min(min_g, phase_wire_size)
+    return min_g
 
 def calculate_conduit_power(qty, wire_size, has_ground, g_size):
     check_size = max(wire_size, g_size) if has_ground else wire_size
@@ -120,7 +147,9 @@ def calculate_conduit_power(qty, wire_size, has_ground, g_size):
 def recommend_wire_and_pipe(breaker_at, factor, qty_ln, has_ground, g_size):
     for size, base_amp in AMPACITY_BASE.items():
         if base_amp * factor >= breaker_at:
-            pipe_rec, _ = calculate_conduit_power(qty_ln, size, has_ground, g_size)
+            rec_g = get_min_ground_size(breaker_at, size, True)
+            effective_g = max(g_size, rec_g) if has_ground else g_size
+            pipe_rec, _ = calculate_conduit_power(qty_ln, size, has_ground, effective_g)
             return size, base_amp * factor, pipe_rec
     return None, None, None
 
@@ -148,13 +177,13 @@ page = st.sidebar.radio("หมวดหมู่การร้อยท่อ"
     "🔊 สายลำโพง VTF & VCT"
 ])
 st.sidebar.divider()
-st.sidebar.info("Developed by Chainarong (Rev.03 EIT Derating Check)")
+st.sidebar.info("Developed by Chainarong (Rev.04 EIT Full Check)")
 
 SAVE_PATH = 'projectlinedata.csv'
 
 # --- หน้า 1: สายไฟฟ้า (Power) ---
 if page == "⚡ สายไฟฟ้า (Power THW)":
-    st.title("⚡ Power Wire Sizing & EIT Derating Check")
+    st.title("⚡ Power Wire Sizing, Derating & Ground Check")
     col1, col2 = st.columns([1.1, 1.4])
     wire_choices = list(WIRE_TABLE.keys())
 
@@ -167,7 +196,7 @@ if page == "⚡ สายไฟฟ้า (Power THW)":
         wires_per_ckt = 2 if "1 เฟส" in phase_mode else 4
 
         num_circuits = st.number_input("จำนวนวงจรในท่อเดียวกัน (วงจร)", min_value=1, max_value=20, value=1)
-        breaker_at = st.selectbox("ขนาดเซอร์กิตเบรกเกอร์ (AT)", BREAKER_RATINGS, index=2)
+        breaker_at = st.selectbox("ขนาดเซอร์กิตเบรกเกอร์สูงสุดในท่อ (AT)", BREAKER_RATINGS, index=2)
         wire_size = st.selectbox("ขนาดสายไฟหลัก (mm²)", wire_choices, index=2)
         has_ground = st.checkbox("มีสาย Ground (G) ร่วมในท่อ 1 เส้น", value=True)
         g_size = st.selectbox("ขนาดสาย G (mm²)", wire_choices, index=1, disabled=not has_ground)
@@ -175,34 +204,58 @@ if page == "⚡ สายไฟฟ้า (Power THW)":
     qty = num_circuits * wires_per_ckt
     pipe_ans, tot_wires = calculate_conduit_power(qty, wire_size, has_ground, g_size)
 
-    # คำนวณ Derating Factor ตามมาตรฐาน วสท. ตารางที่ 5-8
+    # 1) ตรวจสอบพิกัดกระแสและตัวคูณปรับลด (วสท. ตารางที่ 5-8)
     factor = get_derating_factor(num_circuits)
     base_amp = AMPACITY_BASE[wire_size]
     derated_amp = base_amp * factor
     is_amp_ok = derated_amp >= breaker_at
 
-    w_str = int(wire_size) if wire_size == int(wire_size) else wire_size
-    g_str = int(g_size) if g_size == int(g_size) else g_size
+    # 2) ตรวจสอบขนาดสายดินขั้นต่ำตามเบรกเกอร์ (วสท. ตารางที่ 4-1)
+    min_g_req = get_min_ground_size(breaker_at, wire_size, is_amp_ok)
+    is_ground_ok = (g_size >= min_g_req) if has_ground else True
+
+    w_str = fmt_size(wire_size)
+    g_str = fmt_size(g_size)
+    min_g_str = fmt_size(min_g_req)
     spec_text = f"THW {qty}-{w_str}" + (f"/G{g_str}" if has_ground else "")
     revit_type_name = f"{spec_text} in {pipe_ans} EMT"
 
     with col2:
-        # แจ้งเตือนผลการตรวจสอบพิกัดกระแสเทียบกับเบรกเกอร์
+        # แสดงผลตรวจพิกัดสายไฟหลัก
         if is_amp_ok:
             st.success(
-                f"✅ **ผ่านเกณฑ์ วสท. (ตารางที่ 5-8):** พิกัดสาย {w_str} mm² = {base_amp:.0f} A × ตัวคูณ {factor:.2f} "
+                f"✅ **สายไฟหลักผ่านเกณฑ์ วสท. (ตารางที่ 5-8):** สาย {w_str} mm² = {base_amp:.0f} A × ตัวคูณ {factor:.2f} "
                 f"= **{derated_amp:.1f} A** (≥ เบรกเกอร์ {breaker_at} AT)"
             )
         else:
             rec_w, rec_amp, rec_pipe = recommend_wire_and_pipe(breaker_at, factor, qty, has_ground, g_size)
-            rec_w_str = int(rec_w) if rec_w and rec_w == int(rec_w) else rec_w
             rec_msg = (
-                f"แนะนำให้ขยับสายเป็น **{rec_w_str} mm²** (รับได้ {rec_amp:.1f} A) ในท่อ **{rec_pipe} EMT**"
+                f"แนะนำให้ขยับสายหลักเป็น **{fmt_size(rec_w)} mm²** (รับได้ {rec_amp:.1f} A) ในท่อ **{rec_pipe} EMT**"
                 if rec_w else "แนะนำให้แยกท่อลดจำนวนวงจรต่อท่อลง"
             )
             st.error(
-                f"⚠️ **เตือน! พิกัดสายต่ำกว่าเบรกเกอร์:** สาย {w_str} mm² ({base_amp:.0f} A) × ตัวคูณ {factor:.2f} ({num_circuits} วงจร) "
+                f"⚠️ **เตือน! พิกัดสายไฟหลักต่ำกว่าเบรกเกอร์:** สาย {w_str} mm² ({base_amp:.0f} A) × ตัวคูณ {factor:.2f} ({num_circuits} วงจร) "
                 f"เหลือเพียง **{derated_amp:.1f} A** (< เบรกเกอร์ {breaker_at} AT)\n\n👉 {rec_msg}"
+            )
+
+        # แสดงผลตรวจขนาดสายดิน (Ground)
+        if has_ground:
+            if is_ground_ok:
+                st.success(
+                    f"✅ **สายดิน (Ground) ผ่านเกณฑ์ วสท. (ตารางที่ 4-1):** เบรกเกอร์ {breaker_at} AT "
+                    f"กำหนดสายดินขั้นต่ำ **{min_g_str} mm²** (เลือกใช้ {g_str} mm²)"
+                )
+            else:
+                rec_pipe_g, _ = calculate_conduit_power(qty, wire_size, True, min_g_req)
+                st.error(
+                    f"⚠️ **เตือน! ขนาดสายดินเล็กเกินไป:** เบรกเกอร์ {breaker_at} AT ตามตารางที่ 4-1 วสท. "
+                    f"ต้องใช้สายดินขั้นต่ำ **{min_g_str} mm²** (ปัจจุบันเลือก {g_str} mm²)\n\n"
+                    f"👉 แนะนำให้เปลี่ยนสาย G เป็น **{min_g_str} mm²** (ใช้ท่อ **{rec_pipe_g} EMT**)"
+                )
+        else:
+            st.warning(
+                f"ℹ️ **ไม่ได้เลือกสายดิน (G):** หากเป็นวงจรเต้ารับหรือบริภัณฑ์ที่ต้องต่อลงดิน "
+                f"ต้องมีสายดินอย่างน้อย **{min_g_str} mm²** ตามตารางที่ 4-1 วสท."
             )
 
         st.info(f"ชื่อ Conduit Type ใน Revit: **`{revit_type_name}`**")
@@ -218,6 +271,7 @@ if page == "⚡ สายไฟฟ้า (Power THW)":
         else:
             st.code(f"wire_thw_{wire_size} = {qty}", language="text")
 
+    overall_pass = is_amp_ok and is_ground_ok
     if st.button("💾 บันทึกสเปกนี้"):
         new_data = pd.DataFrame([{
             "Revit_Type": revit_type_name,
@@ -227,13 +281,14 @@ if page == "⚡ สายไฟฟ้า (Power THW)":
             "Circuits": num_circuits,
             "Breaker_AT": breaker_at,
             "Derated_Amp": round(derated_amp, 1),
-            "Status": "PASS" if is_amp_ok else "FAIL"
+            "Min_G_mm2": min_g_req if has_ground else 0,
+            "Status": "PASS" if overall_pass else "FAIL"
         }])
         new_data.to_csv(SAVE_PATH, mode='a' if os.path.exists(SAVE_PATH) else 'w', header=not os.path.exists(SAVE_PATH), index=False)
-        if is_amp_ok:
+        if overall_pass:
             st.success("บันทึกสำเร็จ!")
         else:
-            st.warning("บันทึกข้อมูลแล้ว (หมายเหตุ: รายการนี้พิกัดสายต่ำกว่าขนาดเบรกเกอร์)")
+            st.warning("บันทึกข้อมูลแล้ว (หมายเหตุ: รายการนี้มีจุดที่ไม่ผ่านเกณฑ์มาตรฐาน วสท.)")
 
 # --- หน้า 2: สายแลน (LAN) ---
 elif page == "🌐 สายแลน (IT/Network)":

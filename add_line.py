@@ -1,4 +1,4 @@
-# revise04 - Added EIT Table 4-1 Minimum Ground Wire Check + Table 5-8 Derating Check
+# revise05 - Added Saved Spec Table Viewer, CSV Download, and Clear Data Controls
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -105,8 +105,20 @@ PIPE_DATA = [
     {"name": "4\"", "id_mm": 103}
 ]
 
+CSV_COLUMNS = [
+    "Revit_Type",
+    "Spec",
+    "Conduit",
+    "Category",
+    "Circuits",
+    "Breaker_AT",
+    "Derated_Amp",
+    "Min_G_mm2",
+    "Status"
+]
+
 # ==========================================
-# 2. ฟังก์ชันการคำนวณ
+# 2. ฟังก์ชันการคำนวณและจัดการข้อมูล
 # ==========================================
 
 def fmt_size(val):
@@ -165,6 +177,25 @@ def calculate_conduit_area(qty, od_mm):
             break
     return selected_pipe, total_area, fill_ratio
 
+def save_spec_row(save_path, row_dict):
+    df_new = pd.DataFrame([row_dict], columns=CSV_COLUMNS)
+    if os.path.exists(save_path):
+        try:
+            df_existing = pd.read_csv(save_path)
+            if list(df_existing.columns) != CSV_COLUMNS:
+                df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+                for col in CSV_COLUMNS:
+                    if col not in df_combined.columns:
+                        df_combined[col] = "-"
+                df_combined = df_combined[CSV_COLUMNS]
+                df_combined.to_csv(save_path, index=False, encoding="utf-8-sig")
+                return
+        except Exception:
+            pass
+        df_new.to_csv(save_path, mode="a", header=False, index=False, encoding="utf-8-sig")
+    else:
+        df_new.to_csv(save_path, mode="w", header=True, index=False, encoding="utf-8-sig")
+
 # ==========================================
 # 3. UI Streamlit
 # ==========================================
@@ -177,9 +208,9 @@ page = st.sidebar.radio("หมวดหมู่การร้อยท่อ"
     "🔊 สายลำโพง VTF & VCT"
 ])
 st.sidebar.divider()
-st.sidebar.info("Developed by Chainarong (Rev.04 EIT Full Check)")
+st.sidebar.info("Developed by Chainarong (Rev.05 BIM & EIT Standard)")
 
-SAVE_PATH = 'projectlinedata.csv'
+SAVE_PATH = "projectlinedata.csv"
 
 # --- หน้า 1: สายไฟฟ้า (Power) ---
 if page == "⚡ สายไฟฟ้า (Power THW)":
@@ -273,7 +304,7 @@ if page == "⚡ สายไฟฟ้า (Power THW)":
 
     overall_pass = is_amp_ok and is_ground_ok
     if st.button("💾 บันทึกสเปกนี้"):
-        new_data = pd.DataFrame([{
+        save_spec_row(SAVE_PATH, {
             "Revit_Type": revit_type_name,
             "Spec": spec_text,
             "Conduit": pipe_ans,
@@ -283,8 +314,7 @@ if page == "⚡ สายไฟฟ้า (Power THW)":
             "Derated_Amp": round(derated_amp, 1),
             "Min_G_mm2": min_g_req if has_ground else 0,
             "Status": "PASS" if overall_pass else "FAIL"
-        }])
-        new_data.to_csv(SAVE_PATH, mode='a' if os.path.exists(SAVE_PATH) else 'w', header=not os.path.exists(SAVE_PATH), index=False)
+        })
         if overall_pass:
             st.success("บันทึกสำเร็จ!")
         else:
@@ -312,8 +342,17 @@ elif page == "🌐 สายแลน (IT/Network)":
         st.code(f"{lan_info['param']} = {qty_lan}", language="text")
 
     if st.button("💾 บันทึกสเปกนี้"):
-        new_data = pd.DataFrame([{"Revit_Type": revit_type_name, "Spec": spec_lan, "Conduit": pipe_lan, "Category": "LAN"}])
-        new_data.to_csv(SAVE_PATH, mode='a' if os.path.exists(SAVE_PATH) else 'w', header=not os.path.exists(SAVE_PATH), index=False)
+        save_spec_row(SAVE_PATH, {
+            "Revit_Type": revit_type_name,
+            "Spec": spec_lan,
+            "Conduit": pipe_lan,
+            "Category": "LAN",
+            "Circuits": "-",
+            "Breaker_AT": "-",
+            "Derated_Amp": "-",
+            "Min_G_mm2": "-",
+            "Status": "PASS"
+        })
         st.success("บันทึกสำเร็จ!")
 
 # --- หน้า 3: สาย FRC & Twisted Pair ---
@@ -338,8 +377,17 @@ elif page == "🔥 สายทนไฟ FRC & Control":
         st.code(f"{tp_info['param']} = {qty_tp}", language="text")
 
     if st.button("💾 บันทึกสเปกนี้"):
-        new_data = pd.DataFrame([{"Revit_Type": revit_type_name, "Spec": spec_tp, "Conduit": pipe_tp, "Category": "FRC_Control"}])
-        new_data.to_csv(SAVE_PATH, mode='a' if os.path.exists(SAVE_PATH) else 'w', header=not os.path.exists(SAVE_PATH), index=False)
+        save_spec_row(SAVE_PATH, {
+            "Revit_Type": revit_type_name,
+            "Spec": spec_tp,
+            "Conduit": pipe_tp,
+            "Category": "FRC_Control",
+            "Circuits": "-",
+            "Breaker_AT": "-",
+            "Derated_Amp": "-",
+            "Min_G_mm2": "-",
+            "Status": "PASS"
+        })
         st.success("บันทึกสำเร็จ!")
 
 # --- หน้า 4: สาย VTF & VCT ---
@@ -364,6 +412,58 @@ elif page == "🔊 สายลำโพง VTF & VCT":
         st.code(f"{vtf_info['param']} = {qty_vtf}", language="text")
 
     if st.button("💾 บันทึกสเปกนี้"):
-        new_data = pd.DataFrame([{"Revit_Type": revit_type_name, "Spec": spec_vtf, "Conduit": pipe_vtf, "Category": "VTF_VCT"}])
-        new_data.to_csv(SAVE_PATH, mode='a' if os.path.exists(SAVE_PATH) else 'w', header=not os.path.exists(SAVE_PATH), index=False)
+        save_spec_row(SAVE_PATH, {
+            "Revit_Type": revit_type_name,
+            "Spec": spec_vtf,
+            "Conduit": pipe_vtf,
+            "Category": "VTF_VCT",
+            "Circuits": "-",
+            "Breaker_AT": "-",
+            "Derated_Amp": "-",
+            "Min_G_mm2": "-",
+            "Status": "PASS"
+        })
         st.success("บันทึกสำเร็จ!")
+
+# ==========================================
+# 4. ส่วนแสดงตารางรายการที่บันทึกไว้, ดาวน์โหลด และล้างข้อมูล
+# ==========================================
+st.divider()
+st.subheader("📋 รายการสเปกท่อร้อยสายที่บันทึกไว้ทั้งโปรเจกต์")
+
+if os.path.exists(SAVE_PATH):
+    try:
+        df_saved = pd.read_csv(SAVE_PATH)
+        if not df_saved.empty:
+            # ตัวกรองหมวดหมู่สำหรับเช็กสเปกสะดวกขึ้น
+            categories = ["ทั้งหมด"] + sorted(df_saved["Category"].dropna().unique().tolist())
+            selected_cat = st.selectbox("กรองตามหมวดหมู่ระบบ", categories, key="filter_saved_cat")
+
+            df_display = df_saved if selected_cat == "ทั้งหมด" else df_saved[df_saved["Category"] == selected_cat]
+
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
+            st.caption(f"แสดง {len(df_display)} จากทั้งหมด {len(df_saved)} รายการ (ไฟล์: {SAVE_PATH})")
+
+            btn_col1, btn_col2, _ = st.columns([1.2, 1.2, 3])
+            with btn_col1:
+                csv_bytes = df_saved.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+                st.download_button(
+                    label="📥 ดาวน์โหลดไฟล์ CSV",
+                    data=csv_bytes,
+                    file_name="projectlinedata.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            with btn_col2:
+                if st.button("🗑️ ล้างข้อมูลทั้งหมด", type="secondary", use_container_width=True):
+                    os.remove(SAVE_PATH)
+                    st.rerun()
+        else:
+            st.info("ยังไม่มีรายการที่บันทึกไว้")
+    except Exception as e:
+        st.error(f"ไม่สามารถอ่านไฟล์ {SAVE_PATH} ได้ ({e})")
+        if st.button("🗑️ รีเซ็ตไฟล์ข้อมูลที่เสียหาย"):
+            os.remove(SAVE_PATH)
+            st.rerun()
+else:
+    st.info("ยังไม่มีรายการที่บันทึกไว้ กดปุ่ม '💾 บันทึกสเปกนี้' ด้านบนเพื่อสร้างตารางสรุปสเปกของโปรเจกต์")
